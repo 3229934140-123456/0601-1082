@@ -38,6 +38,8 @@ import { SkillResolver } from './skill/resolver';
 import { BattleLogger } from './event/logger';
 import { ReplayManager } from './event/replay';
 import { BattleSerializer } from './serialize';
+import { BattleDiff, BattleDiffResult } from './event/diff';
+import { ReplayEngine, ReplayStep } from './event/replay-engine';
 import { AIAdvisor } from './ai/advisor';
 
 export class Battle {
@@ -386,6 +388,7 @@ export class Battle {
   }
 
   getSnapshot(): BattleSnapshot {
+    const turnState = this.turnManager.getState();
     return {
       turn: this.turnManager.getCurrentTurn(),
       phase: this.turnManager.getPhase(),
@@ -397,6 +400,8 @@ export class Battle {
       events: this.logger.getEvents(),
       winner: this.turnManager.getWinner(),
       randomState: this.random.getState(),
+      currentUnitIndex: turnState.currentUnitIndex,
+      turnOrder: turnState.turnOrder,
     };
   }
 
@@ -463,12 +468,14 @@ export class Battle {
       this.turnManager.restoreState({
         currentTurn: data.snapshot.turn,
         phase: data.snapshot.phase,
-        currentUnitIndex: 0,
-        turnOrder: [],
+        currentUnitIndex: data.snapshot.currentUnitIndex || 0,
+        turnOrder: data.snapshot.turnOrder || [],
         winner: data.snapshot.winner,
       });
 
-      this.turnManager.calculateTurnOrder(this.unitManager.getAliveUnits());
+      if (!data.snapshot.turnOrder || data.snapshot.turnOrder.length === 0) {
+        this.turnManager.calculateTurnOrder(this.unitManager.getAliveUnits());
+      }
 
       this.rebuildSubsystems();
 
@@ -526,6 +533,34 @@ export class Battle {
 
   getConfig(): BattleConfig {
     return { ...this.config };
+  }
+
+  diffSnapshots(left: BattleSnapshot, right: BattleSnapshot): BattleDiffResult {
+    return BattleDiff.diffSnapshots(left, right);
+  }
+
+  diffWithCurrent(other: BattleSnapshot): BattleDiffResult {
+    return BattleDiff.diffSnapshots(this.getSnapshot(), other);
+  }
+
+  createReplayEngine(): ReplayEngine {
+    const engine = new ReplayEngine(this.config);
+    engine.loadActions(this.replayManager.getRecordedActions());
+    return engine;
+  }
+
+  replayToStep(stepIndex: number): BattleSnapshot | null {
+    const engine = this.createReplayEngine();
+    return engine.replayToStep(stepIndex);
+  }
+
+  replayAllSteps(): ReplayStep[] {
+    const engine = this.createReplayEngine();
+    return engine.replayAllSteps();
+  }
+
+  getReplayActionCount(): number {
+    return this.replayManager.getRecordedActionCount();
   }
 
   private ensureInitialized(): void {

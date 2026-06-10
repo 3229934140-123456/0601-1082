@@ -93,6 +93,8 @@ export class BattleSerializer {
       events: snapshot.events.map((e: BattleEvent) => ({ ...e, data: { ...e.data } })),
       winner: snapshot.winner,
       randomState: snapshot.randomState,
+      currentUnitIndex: snapshot.currentUnitIndex,
+      turnOrder: snapshot.turnOrder.map(e => ({ ...e })),
     };
   }
 

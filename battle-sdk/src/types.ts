@@ -229,6 +229,8 @@ export interface BattleSnapshot {
   events: BattleEvent[];
   winner: TeamId | null;
   randomState: number;
+  currentUnitIndex: number;
+  turnOrder: { unitId: UnitId; team: TeamId; priority: number; speed: number }[];
 }
 
 export interface BattleConfig {

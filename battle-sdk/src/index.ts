@@ -13,6 +13,8 @@ export { UndoManager } from './action/undo';
 export { SkillResolver } from './skill/resolver';
 export { BattleLogger } from './event/logger';
 export { ReplayManager } from './event/replay';
+export { BattleDiff } from './event/diff';
+export { ReplayEngine } from './event/replay-engine';
 export { BattleSerializer } from './serialize';
 export { AIAdvisor } from './ai/advisor';
 
