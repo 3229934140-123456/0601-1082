@@ -1,0 +1,1 @@
+export { SkillResolver } from './resolver';
