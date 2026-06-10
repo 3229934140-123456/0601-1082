@@ -65,7 +65,7 @@ export class Battle {
     this.map = new GridMap(0, 0, this.config.defaultTerrain);
     this.unitManager = new UnitManager();
     this.turnManager = new TurnManager(0, 0, [], this.random);
-    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random, this.configLoader);
+    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random, this.configLoader, 0);
     this.actionValidator = new ActionValidator(this.map, this.unitManager);
     this.movementCalc = new MovementCalculator(this.map, this.unitManager);
     this.attackCalc = new AttackCalculator(this.map, this.unitManager);
@@ -138,7 +138,10 @@ export class Battle {
   }
 
   private rebuildSubsystems(): void {
-    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random, this.configLoader);
+    this.skillResolver = new SkillResolver(
+      this.map, this.unitManager, this.random, this.configLoader,
+      this.turnManager.getCurrentTurn(),
+    );
     this.actionValidator = new ActionValidator(this.map, this.unitManager);
     this.movementCalc = new MovementCalculator(this.map, this.unitManager);
     this.attackCalc = new AttackCalculator(this.map, this.unitManager);
@@ -158,6 +161,7 @@ export class Battle {
       this.processEndOfRoundTerrainEffects();
     }
 
+    this.skillResolver.setCurrentTurn(this.turnManager.getCurrentTurn());
     return result;
   }
 
@@ -170,14 +174,15 @@ export class Battle {
 
       if (terrain.damagePerTurn > 0) {
         const damage = terrain.damagePerTurn;
-        const actualDamage = this.unitManager.applyDamage(unit.id, damage, 'true');
-        if (actualDamage > 0) {
+        const applyResult = this.unitManager.applyDamageDetailed(unit.id, damage);
+        if (applyResult.hpDamage > 0) {
           this.logger.log(this.turnManager.getCurrentTurn(), 'turnEnd', 'terrain_damage', {
             unitId: unit.id,
             terrainType: terrain.type,
-            damage: actualDamage,
+            damage: applyResult.hpDamage,
+            shieldAbsorbed: applyResult.shieldAbsorbed,
           });
-          if (!this.unitManager.getUnit(unit.id)?.isAlive) {
+          if (applyResult.died) {
             terrainDeaths.push(unit.id);
           }
         }
@@ -238,6 +243,7 @@ export class Battle {
       this.replayManager.getRecordedActionCount(),
     );
 
+    this.skillResolver.setCurrentTurn(this.turnManager.getCurrentTurn());
     const result = this.skillResolver.resolveAction(action, skillTemplate);
 
     const unit = this.unitManager.getUnit(action.unitId);
@@ -458,7 +464,7 @@ export class Battle {
         currentTurn: data.snapshot.turn,
         phase: data.snapshot.phase,
         currentUnitIndex: 0,
-        turnOrder: this.turnManager.getTurnOrder(),
+        turnOrder: [],
         winner: data.snapshot.winner,
       });
 
@@ -472,6 +478,11 @@ export class Battle {
       this.replayManager.clear();
 
       this.undoManager = new UndoManager(this.config.allowUndo);
+      if (data.undoStack && data.undoStack.length > 0) {
+        for (const snap of data.undoStack) {
+          this.undoManager.pushRawSnapshot(snap);
+        }
+      }
 
       this.initialized = true;
       return true;

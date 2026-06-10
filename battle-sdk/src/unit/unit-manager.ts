@@ -153,11 +153,17 @@ export class UnitManager {
   }
 
   applyDamage(unitId: UnitId, rawDamage: number, _damageType: string): number {
+    const result = this.applyDamageDetailed(unitId, rawDamage);
+    return result.hpDamage;
+  }
+
+  applyDamageDetailed(unitId: UnitId, rawDamage: number): { shieldAbsorbed: number; hpDamage: number; died: boolean } {
     const unit = this.units.get(unitId);
-    if (!unit || !unit.isAlive) return 0;
+    if (!unit || !unit.isAlive) return { shieldAbsorbed: 0, hpDamage: 0, died: false };
 
     const shieldManager = this.statusManagers.get(unitId);
     let remaining = rawDamage;
+    let shieldAbsorbed = 0;
 
     if (shieldManager) {
       const shields = shieldManager.getEffectsByType('shield');
@@ -165,6 +171,7 @@ export class UnitManager {
         const absorbed = Math.min(remaining, shield.template.shieldAmount);
         remaining -= absorbed;
         shield.template.shieldAmount -= absorbed;
+        shieldAbsorbed += absorbed;
         if (shield.template.shieldAmount <= 0) {
           shieldManager.removeEffect(shield.id);
           unit.statusEffects = unit.statusEffects.filter(e => e.id !== shield.id);
@@ -172,11 +179,14 @@ export class UnitManager {
       }
     }
 
-    unit.stats.hp = Math.max(0, unit.stats.hp - remaining);
+    const hpDamage = remaining;
+    unit.stats.hp = Math.max(0, unit.stats.hp - hpDamage);
+    let died = false;
     if (unit.stats.hp <= 0) {
       this.killUnit(unitId);
+      died = true;
     }
-    return remaining;
+    return { shieldAbsorbed, hpDamage, died };
   }
 
   applyHeal(unitId: UnitId, amount: number): number {
@@ -253,33 +263,43 @@ export class UnitManager {
   }
 
   restoreUnitFromSnapshot(u: Unit): void {
-    const template: UnitTemplate = {
-      id: u.templateId,
+    const sm = new StatusEffectManager();
+    for (const effect of u.statusEffects) {
+      sm.restoreEffect(effect);
+    }
+
+    const unit: Unit = {
+      id: u.id,
+      templateId: u.templateId,
       name: u.name,
       team: u.team,
+      position: { ...u.position } as Position,
       stats: { ...u.stats },
       skills: [...u.skills],
-      tags: [...u.tags],
-      isSummon: u.isSummon,
-      summonDuration: u.summonDuration,
-      priority: u.priority,
-    };
-    this.createUnit(template, u.position);
-    const restored = this.getUnit(u.id);
-    if (restored) {
-      restored.id = u.id;
-      restored.isAlive = u.isAlive;
-      restored.stats = { ...u.stats };
-      restored.statusEffects = u.statusEffects.map((e: StatusEffectInstance) => ({
+      statusEffects: u.statusEffects.map((e: StatusEffectInstance) => ({
         ...e,
         template: { ...e.template },
-      }));
-      restored.cooldowns = { ...u.cooldowns };
-      restored.hasActed = u.hasActed;
-      restored.isSummon = u.isSummon;
-      restored.summonDuration = u.summonDuration;
-      restored.summonTurn = u.summonTurn;
-      this.syncStatusEffectsFromUnit(restored.id);
+      })),
+      tags: [...u.tags],
+      isAlive: u.isAlive,
+      isSummon: u.isSummon,
+      summonDuration: u.summonDuration,
+      summonTurn: u.summonTurn,
+      cooldowns: { ...u.cooldowns },
+      priority: u.priority,
+      hasActed: u.hasActed,
+    };
+
+    this.units.set(u.id, unit);
+    this.statusManagers.set(u.id, sm);
+
+    if (u.isAlive) {
+      this.positionMap.set(this.posKey(u.position), u.id);
+    }
+
+    const idNum = parseInt(u.id.replace('unit_', ''), 10);
+    if (!isNaN(idNum) && idNum >= unitIdCounter) {
+      unitIdCounter = idNum + 1;
     }
   }
 

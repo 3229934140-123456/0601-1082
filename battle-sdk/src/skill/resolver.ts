@@ -23,7 +23,12 @@ export class SkillResolver {
     private unitManager: UnitManager,
     private random: SeededRandom,
     private configLoader: ConfigLoader,
+    private currentTurn: number = 0,
   ) {}
+
+  setCurrentTurn(turn: number): void {
+    this.currentTurn = turn;
+  }
 
   resolveAction(action: Action, skillTemplate?: SkillTemplate): ActionResult {
     switch (action.type) {
@@ -75,11 +80,37 @@ export class SkillResolver {
       const target = this.unitManager.getUnit(targetId);
       if (!target || !target.isAlive) continue;
 
-      const result = this.calculateDamage(attacker, target, 'physical');
-      damageResults.push(result);
+      const preCalc = this.computeRawDamage(attacker, target, 'physical');
+      if (preCalc.avoided) {
+        damageResults.push({
+          targetId: target.id,
+          damageType: 'physical',
+          rawDamage: 0,
+          shieldAbsorbed: 0,
+          defenseReduced: 0,
+          terrainBonus: 0,
+          finalDamage: 0,
+          isCrit: false,
+          isKillingBlow: false,
+        });
+        continue;
+      }
 
-      const actualDamage = this.unitManager.applyDamage(targetId, result.finalDamage, result.damageType);
-      if (actualDamage > 0 && this.unitManager.getUnit(targetId)?.stats.hp === 0) {
+      const applyResult = this.unitManager.applyDamageDetailed(targetId, preCalc.rawDamage);
+
+      damageResults.push({
+        targetId: target.id,
+        damageType: 'physical',
+        rawDamage: preCalc.rawDamage,
+        shieldAbsorbed: applyResult.shieldAbsorbed,
+        defenseReduced: preCalc.defenseReduced,
+        terrainBonus: preCalc.terrainBonus,
+        finalDamage: applyResult.hpDamage,
+        isCrit: preCalc.isCrit,
+        isKillingBlow: applyResult.died,
+      });
+
+      if (applyResult.died) {
         unitsDied.push(targetId);
       }
     }
@@ -116,7 +147,7 @@ export class SkillResolver {
         if (summonTemplate) {
           const summonPos = this.resolveSummonPosition(effect.summonPosition, caster, action.targetPosition);
           if (summonPos && this.map.isPassable(summonPos) && !this.unitManager.getUnitAtPosition(summonPos)?.isAlive) {
-            const summoned = this.unitManager.summonUnit(summonTemplate, summonPos, 0);
+            const summoned = this.unitManager.summonUnit(summonTemplate, summonPos, this.currentTurn);
             unitsSummoned.push(summoned.id);
           }
         }
@@ -129,11 +160,37 @@ export class SkillResolver {
         if (!target || !target.isAlive) continue;
 
         if (effect.baseDamage > 0 || effect.scalingStat) {
-          const dmgResult = this.calculateSkillDamage(caster, target, effect);
-          damageResults.push(dmgResult);
+          const preCalc = this.computeSkillRawDamage(caster, target, effect);
+          if (preCalc.avoided) {
+            damageResults.push({
+              targetId: target.id,
+              damageType: effect.damageType,
+              rawDamage: 0,
+              shieldAbsorbed: 0,
+              defenseReduced: 0,
+              terrainBonus: 0,
+              finalDamage: 0,
+              isCrit: false,
+              isKillingBlow: false,
+            });
+            continue;
+          }
 
-          const actualDamage = this.unitManager.applyDamage(targetId, dmgResult.finalDamage, dmgResult.damageType);
-          if (actualDamage > 0 && this.unitManager.getUnit(targetId)?.stats.hp === 0) {
+          const applyResult = this.unitManager.applyDamageDetailed(targetId, preCalc.rawDamage);
+
+          damageResults.push({
+            targetId: target.id,
+            damageType: effect.damageType,
+            rawDamage: preCalc.rawDamage,
+            shieldAbsorbed: applyResult.shieldAbsorbed,
+            defenseReduced: preCalc.defenseReduced,
+            terrainBonus: preCalc.terrainBonus,
+            finalDamage: applyResult.hpDamage,
+            isCrit: preCalc.isCrit,
+            isKillingBlow: applyResult.died,
+          });
+
+          if (applyResult.died) {
             unitsDied.push(targetId);
           }
         }
@@ -165,7 +222,7 @@ export class SkillResolver {
                 tickInterval: 1,
               },
               action.unitId,
-              0,
+              this.currentTurn,
             );
             this.unitManager.addStatusEffect(targetId, seInstance);
             statusEffectsApplied.push(seInstance);
@@ -180,7 +237,7 @@ export class SkillResolver {
         for (const statusTpl of effect.statusEffects) {
           const sm = this.unitManager.getStatusManager(targetId);
           if (sm) {
-            const seInstance = sm.addEffect(statusTpl, action.unitId, 0);
+            const seInstance = sm.addEffect(statusTpl, action.unitId, this.currentTurn);
             this.unitManager.addStatusEffect(targetId, seInstance);
             statusEffectsApplied.push(seInstance);
           }
@@ -260,7 +317,11 @@ export class SkillResolver {
     };
   }
 
-  calculateDamage(attacker: Unit, target: Unit, damageType: DamageType): DamageResult {
+  private computeRawDamage(
+    attacker: Unit,
+    target: Unit,
+    damageType: DamageType,
+  ): { rawDamage: number; defenseReduced: number; terrainBonus: number; isCrit: boolean; avoided: boolean } {
     const terrain = this.map.getTerrain(target.position);
     let rawDamage = attacker.stats.attack;
 
@@ -286,52 +347,20 @@ export class SkillResolver {
 
     const avoidCheck = this.random.nextBool(target.stats.avoidRate + terrain.avoidBonus);
     if (avoidCheck) {
-      return {
-        targetId: target.id,
-        damageType,
-        rawDamage: 0,
-        shieldAbsorbed: 0,
-        defenseReduced: 0,
-        terrainBonus: 0,
-        finalDamage: 0,
-        isCrit: false,
-        isKillingBlow: false,
-      };
+      return { rawDamage: 0, defenseReduced: 0, terrainBonus: 0, isCrit: false, avoided: true };
     }
 
     const terrainBonus = terrain.attackBonus;
     rawDamage += terrainBonus;
 
-    const shieldManager = this.unitManager.getStatusManager(target.id);
-    let shieldAbsorbed = 0;
-    let remaining = rawDamage;
-
-    if (shieldManager) {
-      const shields = shieldManager.getEffectsByType('shield');
-      for (const shield of shields) {
-        const absorbed = Math.min(remaining, shield.template.shieldAmount);
-        remaining -= absorbed;
-        shieldAbsorbed += absorbed;
-      }
-    }
-
-    const finalDamage = Math.max(0, remaining);
-    const isKillingBlow = target.stats.hp - finalDamage <= 0;
-
-    return {
-      targetId: target.id,
-      damageType,
-      rawDamage: rawDamage + shieldAbsorbed,
-      shieldAbsorbed,
-      defenseReduced,
-      terrainBonus,
-      finalDamage,
-      isCrit,
-      isKillingBlow,
-    };
+    return { rawDamage, defenseReduced, terrainBonus, isCrit, avoided: false };
   }
 
-  private calculateSkillDamage(caster: Unit, target: Unit, effect: SkillEffect): DamageResult {
+  private computeSkillRawDamage(
+    caster: Unit,
+    target: Unit,
+    effect: SkillEffect,
+  ): { rawDamage: number; defenseReduced: number; terrainBonus: number; isCrit: boolean; avoided: boolean } {
     let rawDamage = effect.baseDamage;
 
     if (effect.scalingStat && effect.scalingRatio > 0) {
@@ -358,49 +387,13 @@ export class SkillResolver {
 
     const avoidCheck = this.random.nextBool(target.stats.avoidRate + terrain.avoidBonus);
     if (avoidCheck) {
-      return {
-        targetId: target.id,
-        damageType: effect.damageType,
-        rawDamage: 0,
-        shieldAbsorbed: 0,
-        defenseReduced: 0,
-        terrainBonus: 0,
-        finalDamage: 0,
-        isCrit: false,
-        isKillingBlow: false,
-      };
+      return { rawDamage: 0, defenseReduced: 0, terrainBonus: 0, isCrit: false, avoided: true };
     }
 
     const terrainBonus = terrain.attackBonus;
     rawDamage += terrainBonus;
 
-    const shieldManager = this.unitManager.getStatusManager(target.id);
-    let shieldAbsorbed = 0;
-    let remaining = rawDamage;
-
-    if (shieldManager) {
-      const shields = shieldManager.getEffectsByType('shield');
-      for (const shield of shields) {
-        const absorbed = Math.min(remaining, shield.template.shieldAmount);
-        remaining -= absorbed;
-        shieldAbsorbed += absorbed;
-      }
-    }
-
-    const finalDamage = Math.max(0, remaining);
-    const isKillingBlow = target.stats.hp - finalDamage <= 0;
-
-    return {
-      targetId: target.id,
-      damageType: effect.damageType,
-      rawDamage: rawDamage + shieldAbsorbed,
-      shieldAbsorbed,
-      defenseReduced,
-      terrainBonus,
-      finalDamage,
-      isCrit,
-      isKillingBlow,
-    };
+    return { rawDamage, defenseReduced, terrainBonus, isCrit, avoided: false };
   }
 
   private resolveSkillTargets(action: Action, skillTemplate: SkillTemplate): UnitId[] {

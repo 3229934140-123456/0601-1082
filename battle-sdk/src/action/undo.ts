@@ -84,4 +84,11 @@ export class UndoManager {
   getStack(): UndoSnapshot[] {
     return [...this.undoStack];
   }
+
+  pushRawSnapshot(snapshot: UndoSnapshot): void {
+    this.undoStack.push(snapshot);
+    if (this.undoStack.length > this.maxStackSize) {
+      this.undoStack.shift();
+    }
+  }
 }
