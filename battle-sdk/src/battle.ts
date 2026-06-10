@@ -19,6 +19,7 @@ import {
   TerrainConfig,
   TerrainTile,
   UndoSnapshot,
+  StatusEffectInstance,
 } from './types';
 import { ValidationResult as ValidationResult } from './action/validator';
 import { ConfigLoader } from './config';
@@ -64,7 +65,7 @@ export class Battle {
     this.map = new GridMap(0, 0, this.config.defaultTerrain);
     this.unitManager = new UnitManager();
     this.turnManager = new TurnManager(0, 0, [], this.random);
-    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random);
+    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random, this.configLoader);
     this.actionValidator = new ActionValidator(this.map, this.unitManager);
     this.movementCalc = new MovementCalculator(this.map, this.unitManager);
     this.attackCalc = new AttackCalculator(this.map, this.unitManager);
@@ -137,7 +138,7 @@ export class Battle {
   }
 
   private rebuildSubsystems(): void {
-    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random);
+    this.skillResolver = new SkillResolver(this.map, this.unitManager, this.random, this.configLoader);
     this.actionValidator = new ActionValidator(this.map, this.unitManager);
     this.movementCalc = new MovementCalculator(this.map, this.unitManager);
     this.attackCalc = new AttackCalculator(this.map, this.unitManager);
@@ -151,7 +152,60 @@ export class Battle {
 
   nextUnit(): TurnOrderEntry | null {
     this.ensureInitialized();
-    return this.turnManager.nextUnit(this.unitManager);
+    const result = this.turnManager.nextUnit(this.unitManager);
+
+    if (result === null) {
+      this.processEndOfRoundTerrainEffects();
+    }
+
+    return result;
+  }
+
+  private processEndOfRoundTerrainEffects(): void {
+    const alive = this.unitManager.getAliveUnits();
+    const terrainDeaths: UnitId[] = [];
+
+    for (const unit of alive) {
+      const terrain = this.map.getTerrain(unit.position);
+
+      if (terrain.damagePerTurn > 0) {
+        const damage = terrain.damagePerTurn;
+        const actualDamage = this.unitManager.applyDamage(unit.id, damage, 'true');
+        if (actualDamage > 0) {
+          this.logger.log(this.turnManager.getCurrentTurn(), 'turnEnd', 'terrain_damage', {
+            unitId: unit.id,
+            terrainType: terrain.type,
+            damage: actualDamage,
+          });
+          if (!this.unitManager.getUnit(unit.id)?.isAlive) {
+            terrainDeaths.push(unit.id);
+          }
+        }
+      }
+
+      if (terrain.healingPerTurn > 0 && this.unitManager.getUnit(unit.id)?.isAlive) {
+        const healed = this.unitManager.applyHeal(unit.id, terrain.healingPerTurn);
+        if (healed > 0) {
+          this.logger.log(this.turnManager.getCurrentTurn(), 'turnEnd', 'terrain_heal', {
+            unitId: unit.id,
+            terrainType: terrain.type,
+            heal: healed,
+          });
+        }
+      }
+    }
+
+    for (const diedId of terrainDeaths) {
+      this.logger.logUnitDeath(this.turnManager.getCurrentTurn(), diedId);
+    }
+
+    if (terrainDeaths.length > 0) {
+      const snapshot = this.getSnapshot();
+      const winner = this.turnManager.checkWinCondition(this.config.winConditions, snapshot);
+      if (winner) {
+        this.logger.logBattleEnd(winner);
+      }
+    }
   }
 
   executeAction(action: Action): ActionResult {
@@ -181,6 +235,7 @@ export class Battle {
       this.turnManager,
       this.logger.getEvents(),
       this.random.getState(),
+      this.replayManager.getRecordedActionCount(),
     );
 
     const result = this.skillResolver.resolveAction(action, skillTemplate);
@@ -200,6 +255,10 @@ export class Battle {
 
     for (const diedId of result.unitsDied) {
       this.logger.logUnitDeath(this.turnManager.getCurrentTurn(), diedId);
+    }
+
+    for (const summonedId of result.unitsSummoned) {
+      this.logger.logSummon(this.turnManager.getCurrentTurn(), summonedId, action.unitId);
     }
 
     const snapshot = this.getSnapshot();
@@ -237,30 +296,23 @@ export class Battle {
 
     this.unitManager = new UnitManager();
     for (const u of snapshot.units) {
-      const template: UnitTemplate = {
-        id: u.templateId,
-        name: u.name,
-        team: u.team,
-        stats: { ...u.stats },
-        skills: [...u.skills],
-        tags: [...u.tags],
-        isSummon: u.isSummon,
-        summonDuration: u.summonDuration,
-        priority: u.priority,
-      };
-      this.unitManager.createUnit(template, u.position);
-      const restored = this.unitManager.getUnit(u.id);
-      if (restored) {
-        restored.id = u.id;
-        restored.isAlive = u.isAlive;
-        restored.stats = { ...u.stats };
-        restored.statusEffects = u.statusEffects.map(e => ({ ...e, template: { ...e.template } }));
-        restored.cooldowns = { ...u.cooldowns };
-        restored.hasActed = u.hasActed;
-      }
+      this.unitManager.restoreUnitFromSnapshot(u);
     }
 
     this.random.setState(snapshot.randomState);
+
+    this.turnManager.restoreState({
+      currentTurn: snapshot.turn,
+      phase: snapshot.phase,
+      currentUnitIndex: snapshot.currentUnitIndex,
+      turnOrder: snapshot.turnOrder,
+      winner: snapshot.winner,
+    });
+
+    this.logger.restoreEvents(snapshot.events);
+
+    this.replayManager.truncateTo(snapshot.recordedActionCount);
+
     this.rebuildSubsystems();
     return true;
   }
@@ -392,27 +444,7 @@ export class Battle {
 
       this.unitManager = new UnitManager();
       for (const u of data.snapshot.units) {
-        const template: UnitTemplate = {
-          id: u.templateId,
-          name: u.name,
-          team: u.team,
-          stats: { ...u.stats },
-          skills: [...u.skills],
-          tags: [...u.tags],
-          isSummon: u.isSummon,
-          summonDuration: u.summonDuration,
-          priority: u.priority,
-        };
-        this.unitManager.createUnit(template, u.position);
-        const restored = this.unitManager.getUnit(u.id);
-        if (restored) {
-          restored.id = u.id;
-          restored.isAlive = u.isAlive;
-          restored.stats = { ...u.stats };
-          restored.statusEffects = u.statusEffects.map((e: import('./types').StatusEffectInstance) => ({ ...e, template: { ...e.template } }));
-          restored.cooldowns = { ...u.cooldowns };
-          restored.hasActed = u.hasActed;
-        }
+        this.unitManager.restoreUnitFromSnapshot(u);
       }
 
       this.turnManager = new TurnManager(
@@ -422,12 +454,24 @@ export class Battle {
         this.random,
       );
 
+      this.turnManager.restoreState({
+        currentTurn: data.snapshot.turn,
+        phase: data.snapshot.phase,
+        currentUnitIndex: 0,
+        turnOrder: this.turnManager.getTurnOrder(),
+        winner: data.snapshot.winner,
+      });
+
+      this.turnManager.calculateTurnOrder(this.unitManager.getAliveUnits());
+
       this.rebuildSubsystems();
 
       this.logger.clear();
-      for (const evt of data.snapshot.events) {
-        this.logger.log(evt.turn, evt.phase, evt.type, evt.data);
-      }
+      this.logger.restoreEvents(data.snapshot.events);
+
+      this.replayManager.clear();
+
+      this.undoManager = new UndoManager(this.config.allowUndo);
 
       this.initialized = true;
       return true;

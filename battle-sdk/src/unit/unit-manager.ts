@@ -239,6 +239,50 @@ export class UnitManager {
     return Array.from(teams);
   }
 
+  syncStatusEffectsFromUnit(unitId: UnitId): void {
+    const unit = this.units.get(unitId);
+    if (!unit) return;
+    let sm = this.statusManagers.get(unitId);
+    if (!sm) {
+      sm = new StatusEffectManager();
+      this.statusManagers.set(unitId, sm);
+    }
+    for (const effect of unit.statusEffects) {
+      sm.restoreEffect(effect);
+    }
+  }
+
+  restoreUnitFromSnapshot(u: Unit): void {
+    const template: UnitTemplate = {
+      id: u.templateId,
+      name: u.name,
+      team: u.team,
+      stats: { ...u.stats },
+      skills: [...u.skills],
+      tags: [...u.tags],
+      isSummon: u.isSummon,
+      summonDuration: u.summonDuration,
+      priority: u.priority,
+    };
+    this.createUnit(template, u.position);
+    const restored = this.getUnit(u.id);
+    if (restored) {
+      restored.id = u.id;
+      restored.isAlive = u.isAlive;
+      restored.stats = { ...u.stats };
+      restored.statusEffects = u.statusEffects.map((e: StatusEffectInstance) => ({
+        ...e,
+        template: { ...e.template },
+      }));
+      restored.cooldowns = { ...u.cooldowns };
+      restored.hasActed = u.hasActed;
+      restored.isSummon = u.isSummon;
+      restored.summonDuration = u.summonDuration;
+      restored.summonTurn = u.summonTurn;
+      this.syncStatusEffectsFromUnit(restored.id);
+    }
+  }
+
   clone(): UnitManager {
     const cloned = new UnitManager();
     for (const [id, unit] of this.units) {

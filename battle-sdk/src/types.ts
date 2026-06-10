@@ -264,6 +264,10 @@ export interface UndoSnapshot {
   phase: BattlePhase;
   events: BattleEvent[];
   randomState: number;
+  currentUnitIndex: number;
+  turnOrder: { unitId: UnitId; team: TeamId; priority: number; speed: number }[];
+  winner: TeamId | null;
+  recordedActionCount: number;
 }
 
 export interface ReplayData {

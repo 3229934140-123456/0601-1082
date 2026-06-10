@@ -57,6 +57,17 @@ export class ReplayManager {
     this.recordedActions = [];
   }
 
+  truncateTo(count: number): void {
+    if (count < 0) count = 0;
+    if (count < this.recordedActions.length) {
+      this.recordedActions = this.recordedActions.slice(0, count);
+    }
+  }
+
+  getRecordedActionCount(): number {
+    return this.recordedActions.length;
+  }
+
   clone(): ReplayManager {
     const cloned = new ReplayManager();
     cloned.recordedActions = this.recordedActions.map(a => ({

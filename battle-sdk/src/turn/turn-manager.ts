@@ -118,9 +118,6 @@ export class TurnManager {
       unitManager.tickStatusEffects(unit.id);
       unitManager.tickCooldowns(unit.id);
       unitManager.checkSummonExpiry(unit.id, this.currentTurn);
-
-      const terrain = null;
-      void terrain;
     }
     this.currentTurn++;
     this.phase = this.currentTurn > this.maxTurns ? 'end' : 'start';
@@ -238,6 +235,36 @@ export class TurnManager {
 
   isBattleOver(): boolean {
     return this.phase === 'end';
+  }
+
+  restoreState(state: {
+    currentTurn: number;
+    phase: BattlePhase;
+    currentUnitIndex: number;
+    turnOrder: TurnOrderEntry[];
+    winner: TeamId | null;
+  }): void {
+    this.currentTurn = state.currentTurn;
+    this.phase = state.phase;
+    this.currentUnitIndex = state.currentUnitIndex;
+    this.turnOrder = state.turnOrder.map(e => ({ ...e }));
+    this.winner = state.winner;
+  }
+
+  getState(): {
+    currentTurn: number;
+    phase: BattlePhase;
+    currentUnitIndex: number;
+    turnOrder: TurnOrderEntry[];
+    winner: TeamId | null;
+  } {
+    return {
+      currentTurn: this.currentTurn,
+      phase: this.phase,
+      currentUnitIndex: this.currentUnitIndex,
+      turnOrder: [...this.turnOrder],
+      winner: this.winner,
+    };
   }
 
   spendActionPoints(unit: Unit, amount: number): boolean {

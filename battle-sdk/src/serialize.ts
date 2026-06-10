@@ -111,6 +111,10 @@ export class BattleSerializer {
       phase: snapshot.phase,
       events: snapshot.events.map((e: BattleEvent) => ({ ...e, data: { ...e.data } })),
       randomState: snapshot.randomState,
+      currentUnitIndex: snapshot.currentUnitIndex,
+      turnOrder: snapshot.turnOrder.map(e => ({ ...e })),
+      winner: snapshot.winner,
+      recordedActionCount: snapshot.recordedActionCount,
     };
   }
 }

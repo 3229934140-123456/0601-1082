@@ -3,6 +3,8 @@ import {
   UndoSnapshot,
   BattlePhase,
   BattleEvent,
+  UnitId,
+  TeamId,
 } from '../types';
 import { UnitManager } from '../unit/unit-manager';
 import { TurnManager } from '../turn/turn-manager';
@@ -21,8 +23,11 @@ export class UndoManager {
     turnManager: TurnManager,
     events: BattleEvent[],
     randomState: number,
+    recordedActionCount: number,
   ): void {
     if (!this.allowUndo) return;
+
+    const turnState = turnManager.getState();
 
     const snapshot: UndoSnapshot = {
       units: unitManager.getAllUnits().map(u => ({
@@ -38,6 +43,10 @@ export class UndoManager {
       phase: turnManager.getPhase(),
       events: events.map(e => ({ ...e, data: { ...e.data } })),
       randomState,
+      currentUnitIndex: turnState.currentUnitIndex,
+      turnOrder: turnState.turnOrder.map(e => ({ ...e })),
+      winner: turnState.winner,
+      recordedActionCount,
     };
 
     this.undoStack.push(snapshot);

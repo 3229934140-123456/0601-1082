@@ -10,16 +10,19 @@ import {
   UnitId,
   StatusEffectInstance,
   Unit,
+  UnitTemplate,
 } from '../types';
 import { UnitManager } from '../unit/unit-manager';
 import { BattleMap } from '../map/index';
 import { SeededRandom } from '../random';
+import { ConfigLoader } from '../config';
 
 export class SkillResolver {
   constructor(
     private map: BattleMap,
     private unitManager: UnitManager,
     private random: SeededRandom,
+    private configLoader: ConfigLoader,
   ) {}
 
   resolveAction(action: Action, skillTemplate?: SkillTemplate): ActionResult {
@@ -105,8 +108,20 @@ export class SkillResolver {
     const shieldResults: ShieldResult[] = [];
     const statusEffectsApplied: StatusEffectInstance[] = [];
     const unitsDied: UnitId[] = [];
+    const unitsSummoned: UnitId[] = [];
 
     for (const effect of skillTemplate.effects) {
+      if (effect.summonTemplateId) {
+        const summonTemplate = this.configLoader.getUnitTemplate(effect.summonTemplateId);
+        if (summonTemplate) {
+          const summonPos = this.resolveSummonPosition(effect.summonPosition, caster, action.targetPosition);
+          if (summonPos && this.map.isPassable(summonPos) && !this.unitManager.getUnitAtPosition(summonPos)?.isAlive) {
+            const summoned = this.unitManager.summonUnit(summonTemplate, summonPos, 0);
+            unitsSummoned.push(summoned.id);
+          }
+        }
+      }
+
       const targets = this.resolveSkillTargets(action, skillTemplate);
 
       for (const targetId of targets) {
@@ -184,9 +199,33 @@ export class SkillResolver {
       statusEffectsApplied,
       unitsMoved: [],
       unitsDied,
-      unitsSummoned: [],
+      unitsSummoned,
       actionPointSpent: skillTemplate.actionPointCost,
     };
+  }
+
+  private resolveSummonPosition(
+    position: 'self' | 'target' | 'adjacent',
+    caster: Unit,
+    targetPosition: import('../types').Position,
+  ): import('../types').Position | null {
+    switch (position) {
+      case 'self':
+        return { ...caster.position };
+      case 'target':
+        return { ...targetPosition };
+      case 'adjacent': {
+        const neighbors = this.map.getNeighbors(caster.position);
+        for (const n of neighbors) {
+          if (this.map.isPassable(n) && !this.unitManager.getUnitAtPosition(n)?.isAlive) {
+            return n;
+          }
+        }
+        return null;
+      }
+      default:
+        return null;
+    }
   }
 
   private resolveWait(action: Action): ActionResult {

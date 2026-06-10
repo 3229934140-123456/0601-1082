@@ -124,6 +124,16 @@ export class StatusEffectManager {
     return ids;
   }
 
+  restoreEffect(instance: StatusEffectInstance): void {
+    if (!this.effects.has(instance.id)) {
+      this.effects.set(instance.id, { ...instance, template: { ...instance.template } });
+      const idNum = parseInt(instance.id.replace('se_', ''), 10);
+      if (!isNaN(idNum) && idNum >= this.nextId) {
+        this.nextId = idNum + 1;
+      }
+    }
+  }
+
   clone(): StatusEffectManager {
     const cloned = new StatusEffectManager();
     cloned.nextId = this.nextId;

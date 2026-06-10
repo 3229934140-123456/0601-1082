@@ -97,6 +97,16 @@ export class BattleLogger {
     eventIdCounter = 0;
   }
 
+  restoreEvents(events: BattleEvent[]): void {
+    this.events = events.map(e => ({ ...e, data: { ...e.data } }));
+    for (const e of events) {
+      const idNum = parseInt(e.id.replace('evt_', ''), 10);
+      if (!isNaN(idNum) && idNum >= eventIdCounter) {
+        eventIdCounter = idNum + 1;
+      }
+    }
+  }
+
   clone(): BattleLogger {
     const cloned = new BattleLogger();
     cloned.events = this.events.map(e => ({ ...e, data: { ...e.data } }));
