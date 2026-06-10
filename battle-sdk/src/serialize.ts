@@ -8,6 +8,7 @@ import {
   BattleEvent,
   WinCondition,
   StatusEffectInstance,
+  ReplayRecord,
 } from './types';
 
 export class BattleSerializer {
@@ -17,15 +18,45 @@ export class BattleSerializer {
     config: BattleConfig,
     snapshot: BattleSnapshot,
     undoStack: UndoSnapshot[],
+    replayRecords: ReplayRecord[],
   ): string {
     const data: SerializedBattle = {
       version: BattleSerializer.VERSION,
       config: this.sanitizeConfig(config),
       snapshot: this.sanitizeSnapshot(snapshot),
       undoStack: undoStack.map((s: UndoSnapshot) => this.sanitizeUndoSnapshot(s)),
+      replayRecords: this.sanitizeReplayRecords(replayRecords),
     };
 
     return JSON.stringify(data);
+  }
+
+  private sanitizeReplayRecords(records: ReplayRecord[]): ReplayRecord[] {
+    return records.map(r => {
+      const copy: ReplayRecord = {
+        type: r.type,
+        turn: r.turn,
+        phase: r.phase,
+      };
+      if (r.action) copy.action = { ...r.action };
+      if (r.result) {
+        copy.result = {
+          ...r.result,
+          damageResults: r.result.damageResults.map(d => ({ ...d })),
+          healResults: r.result.healResults.map(h => ({ ...h })),
+          shieldResults: r.result.shieldResults.map(s => ({ ...s })),
+          statusEffectsApplied: r.result.statusEffectsApplied.map(s => ({ ...s, template: { ...s.template } })),
+          unitsMoved: r.result.unitsMoved.map(m => ({ ...m, from: { ...m.from }, to: { ...m.to } })),
+          unitsDied: [...r.result.unitsDied],
+          unitsSummoned: [...r.result.unitsSummoned],
+          actionPointSpent: r.result.actionPointSpent,
+          action: r.result.action ? { ...r.result.action } : undefined,
+        } as typeof r.result;
+      }
+      if (r.unitId) copy.unitId = r.unitId;
+      if (r.winner !== undefined) copy.winner = r.winner;
+      return copy;
+    });
   }
 
   deserialize(json: string): SerializedBattle {
@@ -116,7 +147,7 @@ export class BattleSerializer {
       currentUnitIndex: snapshot.currentUnitIndex,
       turnOrder: snapshot.turnOrder.map(e => ({ ...e })),
       winner: snapshot.winner,
-      recordedActionCount: snapshot.recordedActionCount,
+      recordCount: snapshot.recordCount,
     };
   }
 }

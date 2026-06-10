@@ -269,7 +269,7 @@ export interface UndoSnapshot {
   currentUnitIndex: number;
   turnOrder: { unitId: UnitId; team: TeamId; priority: number; speed: number }[];
   winner: TeamId | null;
-  recordedActionCount: number;
+  recordCount: number;
 }
 
 export interface ReplayData {
@@ -286,9 +286,22 @@ export interface AISuggestion {
   reasoning: string;
 }
 
+export type ReplayRecordType = 'action' | 'nextUnit' | 'turnStart' | 'turnEnd' | 'battleStart' | 'battleEnd';
+
+export interface ReplayRecord {
+  type: ReplayRecordType;
+  turn: number;
+  phase: BattlePhase;
+  action?: Action;
+  result?: ActionResult;
+  unitId?: UnitId;
+  winner?: TeamId | null;
+}
+
 export interface SerializedBattle {
   version: string;
   config: BattleConfig;
   snapshot: BattleSnapshot;
   undoStack: UndoSnapshot[];
+  replayRecords?: ReplayRecord[];
 }

@@ -23,7 +23,7 @@ export class UndoManager {
     turnManager: TurnManager,
     events: BattleEvent[],
     randomState: number,
-    recordedActionCount: number,
+    recordCount: number,
   ): void {
     if (!this.allowUndo) return;
 
@@ -46,7 +46,7 @@ export class UndoManager {
       currentUnitIndex: turnState.currentUnitIndex,
       turnOrder: turnState.turnOrder.map(e => ({ ...e })),
       winner: turnState.winner,
-      recordedActionCount,
+      recordCount,
     };
 
     this.undoStack.push(snapshot);

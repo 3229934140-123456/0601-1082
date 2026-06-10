@@ -18,17 +18,26 @@ export interface UnitDiff {
   differences: DiffEntry[];
 }
 
+export interface StatusEffectDiff {
+  effectName: string;
+  effectType: string;
+  differences: DiffEntry[];
+}
+
+export interface UnitStatusDiff {
+  unitId: UnitId;
+  unitName: string;
+  onlyInLeft: string[];
+  onlyInRight: string[];
+  effectDiffs: StatusEffectDiff[];
+}
+
 export interface BattleDiffResult {
   metaDifferences: DiffEntry[];
   unitDifferences: UnitDiff[];
   missingInRight: UnitId[];
   missingInLeft: UnitId[];
-  statusEffectDifferences: {
-    unitId: UnitId;
-    unitName: string;
-    onlyInLeft: string[];
-    onlyInRight: string[];
-  }[];
+  statusEffectDifferences: UnitStatusDiff[];
   hasDifferences: boolean;
 }
 
@@ -44,7 +53,9 @@ export class BattleDiff {
       unitDifferences.some(ud => ud.differences.length > 0) ||
       missingInRight.length > 0 ||
       missingInLeft.length > 0 ||
-      statusEffectDifferences.some(sed => sed.onlyInLeft.length > 0 || sed.onlyInRight.length > 0);
+      statusEffectDifferences.some(
+        sed => sed.onlyInLeft.length > 0 || sed.onlyInRight.length > 0 || sed.effectDiffs.length > 0,
+      );
 
     return {
       metaDifferences,
@@ -227,6 +238,22 @@ export class BattleDiff {
       }
     }
 
+    if (left.summonDuration !== right.summonDuration) {
+      diffs.push({
+        field: '召唤持续回合',
+        leftValue: left.summonDuration,
+        rightValue: right.summonDuration,
+      });
+    }
+
+    if (left.summonTurn !== right.summonTurn) {
+      diffs.push({
+        field: '召唤回合',
+        leftValue: left.summonTurn,
+        rightValue: right.summonTurn,
+      });
+    }
+
     return diffs;
   }
 
@@ -243,35 +270,127 @@ export class BattleDiff {
     return { missingInRight, missingInLeft };
   }
 
-  private static diffStatusEffects(leftUnits: Unit[], rightUnits: Unit[]): {
-    unitId: UnitId;
-    unitName: string;
-    onlyInLeft: string[];
-    onlyInRight: string[];
-  }[] {
+  private static diffStatusEffects(leftUnits: Unit[], rightUnits: Unit[]): UnitStatusDiff[] {
     const rightMap = new Map(rightUnits.map(u => [u.id, u]));
-    const result: { unitId: UnitId; unitName: string; onlyInLeft: string[]; onlyInRight: string[] }[] = [];
+    const result: UnitStatusDiff[] = [];
 
     for (const leftUnit of leftUnits) {
       const rightUnit = rightMap.get(leftUnit.id);
       if (!rightUnit) continue;
 
-      const leftEffects = new Set(leftUnit.statusEffects.map(e => `${e.template.type}:${e.template.name}`));
-      const rightEffects = new Set(rightUnit.statusEffects.map(e => `${e.template.type}:${e.template.name}`));
+      const leftByName = new Map(leftUnit.statusEffects.map(e => [e.template.name, e]));
+      const rightByName = new Map(rightUnit.statusEffects.map(e => [e.template.name, e]));
 
-      const onlyInLeft = Array.from(leftEffects).filter(e => !rightEffects.has(e));
-      const onlyInRight = Array.from(rightEffects).filter(e => !leftEffects.has(e));
+      const onlyInLeft = Array.from(leftByName.keys()).filter(n => !rightByName.has(n));
+      const onlyInRight = Array.from(rightByName.keys()).filter(n => !leftByName.has(n));
 
-      if (onlyInLeft.length > 0 || onlyInRight.length > 0) {
+      const effectDiffs: StatusEffectDiff[] = [];
+      for (const name of leftByName.keys()) {
+        const rightEff = rightByName.get(name);
+        if (!rightEff) continue;
+        const leftEff = leftByName.get(name)!;
+
+        const diffs = BattleDiff.diffSingleStatusEffect(leftEff, rightEff);
+        if (diffs.length > 0) {
+          effectDiffs.push({
+            effectName: name,
+            effectType: leftEff.template.type,
+            differences: diffs,
+          });
+        }
+      }
+
+      if (onlyInLeft.length > 0 || onlyInRight.length > 0 || effectDiffs.length > 0) {
         result.push({
           unitId: leftUnit.id,
           unitName: leftUnit.name,
           onlyInLeft,
           onlyInRight,
+          effectDiffs,
         });
       }
     }
 
     return result;
+  }
+
+  private static diffSingleStatusEffect(left: StatusEffectInstance, right: StatusEffectInstance): DiffEntry[] {
+    const diffs: DiffEntry[] = [];
+
+    if (left.remainingDuration !== right.remainingDuration) {
+      diffs.push({
+        field: '剩余持续回合',
+        leftValue: left.remainingDuration,
+        rightValue: right.remainingDuration,
+      });
+    }
+
+    if (left.remainingTicks !== right.remainingTicks) {
+      diffs.push({
+        field: '剩余跳数',
+        leftValue: left.remainingTicks,
+        rightValue: right.remainingTicks,
+      });
+    }
+
+    if (left.template.type !== right.template.type) {
+      diffs.push({
+        field: '效果类型',
+        leftValue: left.template.type,
+        rightValue: right.template.type,
+      });
+    }
+
+    if (left.template.shieldAmount !== right.template.shieldAmount) {
+      diffs.push({
+        field: '护盾剩余量',
+        leftValue: left.template.shieldAmount,
+        rightValue: right.template.shieldAmount,
+      });
+    }
+
+    if (left.template.damagePerTick !== right.template.damagePerTick) {
+      diffs.push({
+        field: '每跳伤害',
+        leftValue: left.template.damagePerTick,
+        rightValue: right.template.damagePerTick,
+      });
+    }
+
+    if (left.template.healPerTick !== right.template.healPerTick) {
+      diffs.push({
+        field: '每跳治疗',
+        leftValue: left.template.healPerTick,
+        rightValue: right.template.healPerTick,
+      });
+    }
+
+    if (left.template.tickInterval !== right.template.tickInterval) {
+      diffs.push({
+        field: '跳数间隔',
+        leftValue: left.template.tickInterval,
+        rightValue: right.template.tickInterval,
+      });
+    }
+
+    if (left.template.duration !== right.template.duration) {
+      diffs.push({
+        field: '原始持续回合',
+        leftValue: left.template.duration,
+        rightValue: right.template.duration,
+      });
+    }
+
+    if (left.template.stun !== right.template.stun) {
+      diffs.push({ field: '眩晕', leftValue: left.template.stun, rightValue: right.template.stun });
+    }
+    if (left.template.root !== right.template.root) {
+      diffs.push({ field: '定身', leftValue: left.template.root, rightValue: right.template.root });
+    }
+    if (left.template.silence !== right.template.silence) {
+      diffs.push({ field: '沉默', leftValue: left.template.silence, rightValue: right.template.silence });
+    }
+
+    return diffs;
   }
 }

@@ -124,6 +124,10 @@ export class Battle {
     this.logger.clear();
     this.replayManager.clear();
     this.logger.logBattleStart();
+    this.replayManager.recordBattleStart(
+      this.turnManager.getCurrentTurn(),
+      this.turnManager.getPhase(),
+    );
     this.initialized = true;
 
     return [];
@@ -152,15 +156,28 @@ export class Battle {
 
   startBattle(): TurnOrderEntry | null {
     this.ensureInitialized();
-    return this.turnManager.startTurn(this.unitManager);
+    const result = this.turnManager.startTurn(this.unitManager);
+    this.replayManager.recordTurnStart(
+      this.turnManager.getCurrentTurn(),
+      this.turnManager.getPhase(),
+    );
+    return result;
   }
 
   nextUnit(): TurnOrderEntry | null {
     this.ensureInitialized();
+    const prevTurn = this.turnManager.getCurrentTurn();
     const result = this.turnManager.nextUnit(this.unitManager);
 
     if (result === null) {
       this.processEndOfRoundTerrainEffects();
+      this.replayManager.recordTurnEnd(prevTurn, 'turnEnd');
+    } else {
+      this.replayManager.recordNextUnit(
+        this.turnManager.getCurrentTurn(),
+        this.turnManager.getPhase(),
+        result.unitId,
+      );
     }
 
     this.skillResolver.setCurrentTurn(this.turnManager.getCurrentTurn());
@@ -242,7 +259,7 @@ export class Battle {
       this.turnManager,
       this.logger.getEvents(),
       this.random.getState(),
-      this.replayManager.getRecordedActionCount(),
+      this.replayManager.getRecordCount(),
     );
 
     this.skillResolver.setCurrentTurn(this.turnManager.getCurrentTurn());
@@ -254,7 +271,7 @@ export class Battle {
     }
 
     this.logger.logAction(this.turnManager.getCurrentTurn(), result);
-    this.replayManager.record(
+    this.replayManager.recordAction(
       this.turnManager.getCurrentTurn(),
       this.turnManager.getPhase(),
       action,
@@ -273,6 +290,11 @@ export class Battle {
     const winner = this.turnManager.checkWinCondition(this.config.winConditions, snapshot);
     if (winner) {
       this.logger.logBattleEnd(winner);
+      this.replayManager.recordBattleEnd(
+        this.turnManager.getCurrentTurn(),
+        this.turnManager.getPhase(),
+        winner,
+      );
     }
 
     return result;
@@ -319,7 +341,7 @@ export class Battle {
 
     this.logger.restoreEvents(snapshot.events);
 
-    this.replayManager.truncateTo(snapshot.recordedActionCount);
+    this.replayManager.truncateTo(snapshot.recordCount);
 
     this.rebuildSubsystems();
     return true;
@@ -426,6 +448,7 @@ export class Battle {
       this.config,
       this.getSnapshot(),
       this.undoManager.getStack(),
+      this.replayManager.getRecords(),
     );
   }
 
@@ -483,6 +506,9 @@ export class Battle {
       this.logger.restoreEvents(data.snapshot.events);
 
       this.replayManager.clear();
+      if (data.replayRecords && data.replayRecords.length > 0) {
+        this.replayManager.restoreRecords(data.replayRecords);
+      }
 
       this.undoManager = new UndoManager(this.config.allowUndo);
       if (data.undoStack && data.undoStack.length > 0) {
@@ -545,7 +571,7 @@ export class Battle {
 
   createReplayEngine(): ReplayEngine {
     const engine = new ReplayEngine(this.config);
-    engine.loadActions(this.replayManager.getRecordedActions());
+    engine.loadRecords(this.replayManager.getRecords());
     return engine;
   }
 
@@ -561,6 +587,10 @@ export class Battle {
 
   getReplayActionCount(): number {
     return this.replayManager.getRecordedActionCount();
+  }
+
+  getReplayRecordCount(): number {
+    return this.replayManager.getRecordCount();
   }
 
   private ensureInitialized(): void {

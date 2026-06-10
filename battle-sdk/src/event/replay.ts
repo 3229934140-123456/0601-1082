@@ -5,19 +5,77 @@ import {
   Action,
   ActionResult,
   BattlePhase,
+  TeamId,
+  UnitId,
+  ReplayRecord,
 } from '../types';
 import { BattleLogger } from './logger';
 
 export class ReplayManager {
-  private recordedActions: {
-    turn: number;
-    phase: BattlePhase;
-    action: Action;
-    result: ActionResult;
-  }[] = [];
+  private records: ReplayRecord[] = [];
 
-  record(turn: number, phase: BattlePhase, action: Action, result: ActionResult): void {
-    this.recordedActions.push({ turn, phase, action, result });
+  recordAction(turn: number, phase: BattlePhase, action: Action, result: ActionResult): void {
+    this.records.push({
+      type: 'action',
+      turn,
+      phase,
+      action: { ...action },
+      result: { ...result },
+    });
+  }
+
+  recordNextUnit(turn: number, phase: BattlePhase, unitId: UnitId): void {
+    this.records.push({
+      type: 'nextUnit',
+      turn,
+      phase,
+      unitId,
+    });
+  }
+
+  recordTurnStart(turn: number, phase: BattlePhase): void {
+    this.records.push({
+      type: 'turnStart',
+      turn,
+      phase,
+    });
+  }
+
+  recordTurnEnd(turn: number, phase: BattlePhase): void {
+    this.records.push({
+      type: 'turnEnd',
+      turn,
+      phase,
+    });
+  }
+
+  recordBattleStart(turn: number, phase: BattlePhase): void {
+    this.records.push({
+      type: 'battleStart',
+      turn,
+      phase,
+    });
+  }
+
+  recordBattleEnd(turn: number, phase: BattlePhase, winner: TeamId | null): void {
+    this.records.push({
+      type: 'battleEnd',
+      turn,
+      phase,
+      winner,
+    });
+  }
+
+  getRecords(): ReplayRecord[] {
+    return [...this.records];
+  }
+
+  getActionCount(): number {
+    return this.records.filter(r => r.type === 'action').length;
+  }
+
+  getRecordCount(): number {
+    return this.records.length;
   }
 
   exportReplay(config: BattleConfig, logger: BattleLogger): ReplayData {
@@ -39,42 +97,71 @@ export class ReplayManager {
     return JSON.parse(json) as ReplayData;
   }
 
-  getRecordedActions(): typeof this.recordedActions {
-    return [...this.recordedActions];
+  getRecordedActions(): { turn: number; phase: BattlePhase; action: Action; result: ActionResult }[] {
+    return this.records
+      .filter(r => r.type === 'action' && r.action && r.result)
+      .map(r => ({
+        turn: r.turn,
+        phase: r.phase,
+        action: r.action as Action,
+        result: r.result as ActionResult,
+      }));
   }
 
-  getActionsByTurn(turn: number): typeof this.recordedActions {
-    return this.recordedActions.filter(a => a.turn === turn);
+  getActionsByTurn(turn: number): { turn: number; phase: BattlePhase; action: Action; result: ActionResult }[] {
+    return this.getRecordedActions().filter(a => a.turn === turn);
   }
 
   private calculateDuration(): number {
-    const events = this.recordedActions;
-    if (events.length === 0) return 0;
-    return events[events.length - 1].turn - events[0].turn + 1;
+    const actions = this.getRecordedActions();
+    if (actions.length === 0) return 0;
+    return actions[actions.length - 1].turn - actions[0].turn + 1;
   }
 
   clear(): void {
-    this.recordedActions = [];
+    this.records = [];
   }
 
-  truncateTo(count: number): void {
-    if (count < 0) count = 0;
-    if (count < this.recordedActions.length) {
-      this.recordedActions = this.recordedActions.slice(0, count);
+  truncateTo(recordCount: number): void {
+    if (recordCount < 0) recordCount = 0;
+    if (recordCount < this.records.length) {
+      this.records = this.records.slice(0, recordCount);
     }
   }
 
   getRecordedActionCount(): number {
-    return this.recordedActions.length;
+    return this.getRecordedActions().length;
+  }
+
+  restoreRecords(records: ReplayRecord[]): void {
+    this.records = records.map(r => {
+      const copy: ReplayRecord = {
+        type: r.type,
+        turn: r.turn,
+        phase: r.phase,
+      };
+      if (r.action) copy.action = { ...r.action };
+      if (r.result) copy.result = { ...r.result };
+      if (r.unitId) copy.unitId = r.unitId;
+      if (r.winner !== undefined) copy.winner = r.winner;
+      return copy;
+    });
   }
 
   clone(): ReplayManager {
     const cloned = new ReplayManager();
-    cloned.recordedActions = this.recordedActions.map(a => ({
-      ...a,
-      action: { ...a.action },
-      result: { ...a.result },
-    }));
+    cloned.records = this.records.map(r => {
+      const copy: ReplayRecord = {
+        type: r.type,
+        turn: r.turn,
+        phase: r.phase,
+      };
+      if (r.action) copy.action = { ...r.action };
+      if (r.result) copy.result = { ...r.result };
+      if (r.unitId) copy.unitId = r.unitId;
+      if (r.winner !== undefined) copy.winner = r.winner;
+      return copy;
+    });
     return cloned;
   }
 }
